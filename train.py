@@ -6,6 +6,10 @@ import numpy as np
 
 def train(model, train_loader, optimizer, game, accumulation_steps=4):
     model.train()
+    total_loss = 0
+    total_distortion = 0
+    num_batches = len(train_loader)
+
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(config_dict['device']), target.to(config_dict['device'])
         output = model(data)
@@ -15,7 +19,7 @@ def train(model, train_loader, optimizer, game, accumulation_steps=4):
 
         if (batch_idx + 1) % accumulation_steps == 0:
             original_grad = torch.cat([p.grad.data.view(-1) for p in model.parameters() if p.grad is not None])
-            encoded_grad = game.encode_gradient(original_grad)
+            encoded_grad, distortion_cost = game.encode_gradient(original_grad)
             decoded_grad = game.decode_gradient(encoded_grad)
 
             idx = 0
@@ -28,8 +32,20 @@ def train(model, train_loader, optimizer, game, accumulation_steps=4):
             optimizer.zero_grad()
             game.update_L()
 
+            total_loss += loss.item() * accumulation_steps
+            total_distortion += distortion_cost.item()
 
-def test(model, test_loader, game):
+        if (batch_idx + 1) % (accumulation_steps * 10) == 0:
+            print(f"Progress: {batch_idx + 1}/{num_batches} batches")
+
+    avg_loss = total_loss / num_batches
+    avg_distortion = total_distortion / (num_batches // accumulation_steps)
+    print(f"Training complete. Average loss: {avg_loss:.4f}, Average distortion: {avg_distortion:.4f}")
+
+    return avg_loss, avg_distortion
+
+
+def test(model, test_loader, game, device):
     model.eval()
     test_loss = 0
     correct = 0
@@ -37,25 +53,24 @@ def test(model, test_loader, game):
 
     with torch.no_grad():
         for data, target in test_loader:
-            data, target = data.to(config_dict['device']), target.to(config_dict['device'])
+            data, target = data.to(device), target.to(device)
             output = model(data)
-            test_loss += compute_loss(output, target, reduction='sum').item()
+
+            # 累加 batch 损失
+            loss = compute_loss(output, target)
+            test_loss += loss.item() * data.size(0)
+
             pred = output.argmax(dim=1, keepdim=True)
             correct += pred.eq(target.view_as(pred)).sum().item()
-
-            loss = compute_loss(output, target)
-            loss.backward()
 
             original_grad = torch.cat([p.grad.data.view(-1) for p in model.parameters()])
             original_grads.append(original_grad.cpu().numpy())
 
-            encoded_grad = game.encode_gradient(original_grad)
+            encoded_grad, _ = game.encode_gradient(original_grad)
             encoded_grads.append(encoded_grad.cpu().numpy())
 
             decoded_grad = game.decode_gradient(encoded_grad)
             decoded_grads.append(decoded_grad.cpu().numpy())
-
-            model.zero_grad()
 
     test_loss /= len(test_loader.dataset)
     accuracy = 100. * correct / len(test_loader.dataset)

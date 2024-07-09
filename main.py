@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.optim as optim
 from config import config_dict
@@ -5,22 +6,25 @@ from dataset import get_data_loaders
 from stackelberg import StackelbergGame
 from train import train, test
 from model import LeNet5
+from utils import generate_P
 
 
 def main():
-    model = LeNet5().to(config_dict['device'])
-    print(f"Total number of parameters: {model.num_params()}")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = LeNet5().to(device)
+    print("Number of parameters in the model:", model.num_params())
     optimizer = optim.SGD(model.parameters(), lr=config_dict['learning_rate'])
 
     train_loader, test_loader = get_data_loaders()
 
     num_params = sum(p.numel() for p in model.parameters())
-    P = torch.rand(num_params, num_params).to(config_dict['device'])
-    game = StackelbergGame(model, config_dict['gamma'], P)
+    P = generate_P(num_params, config_dict['delta'], device)
+
+    game = StackelbergGame(model, config_dict['gamma'], P, device)
 
     for epoch in range(1, config_dict['epochs'] + 1):
         train(model, train_loader, optimizer, game)
-        accuracy, loss, orig_enc_diff, orig_dec_diff, enc_dec_diff = test(model, test_loader, game)
+        accuracy, loss, orig_enc_diff, orig_dec_diff, enc_dec_diff = test(model, test_loader, game, device)
         print(f'Epoch {epoch}/{config_dict["epochs"]}:')
         print(f'Test set: Average loss: {loss:.4f}, Accuracy: {accuracy:.2f}%')
         print(f'Gradient differences:')
