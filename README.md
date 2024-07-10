@@ -1,4 +1,4 @@
-# Implementation of PAL-SG
+# Unofficial Implementation of PAL-SG
 
 ## Reference
 
